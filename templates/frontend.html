@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study Tool</title>
+    <style>
+        #flashcards, #quiz-time, #feedback {
+            display: none;
+        }
+        .flashcard {
+            margin: 10px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            transition: background-color 0.3s;
+        }
+        .quiz-question {
+            margin-bottom: 15px;
+        }
+        .quiz-question button {
+            margin: 5px;
+        }
+        .quiz-question.correct {
+            background-color: #d4edda;
+        }
+        .quiz-question.incorrect {
+            background-color: #f8d7da;
+        }
+    </style>
+</head>
+<body>
+    <h1>Study Tool</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="file" id="fileInput">
+        <button type="submit">Upload and Generate Summary</button>
+    </form>
+
+    <button id="showFlashcardsBtn">Show Flashcards</button>
+    <button id="showQuizBtn">Start Quiz Time</button>
+    <button id="showFeedbackBtn">Feedback</button>
+
+    <div id="summary"></div>
+    <div id="flashcards"></div>
+    <div id="quiz-time"></div>
+    <div id="feedback"></div>
+
+    <script>
+        let performanceData = []; // Array to track user performance on flashcards
+        let quizCompleted = false; // Tracks if the quiz has been completed
+    
+        document.getElementById('uploadForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+    
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const summaryDiv = document.getElementById('summary');
+                summaryDiv.textContent = data.summary;
+    
+                // Populate flashcards
+                const flashcardsDiv = document.getElementById('flashcards');
+                flashcardsDiv.innerHTML = '';
+                performanceData = []; // Reset performance tracking for new flashcards
+    
+                data.questions.forEach((qa, index) => {
+                    const flashcard = document.createElement('div');
+                    flashcard.classList.add('flashcard');
+                    flashcard.innerHTML = `
+                        <h3>Question ${index + 1}</h3>
+                        <p>${qa.question}</p>
+                        <p style="display: none;"><b>Answer:</b> ${qa.answer}</p>
+                        <button class="show-answer">Show Answer</button>
+                        <button class="review-later">Review Later</button>
+                        <button class="i-knew-it">I Knew It!</button>
+                    `;
+    
+                    // Add event listeners for buttons
+                    const showAnswerButton = flashcard.querySelector('.show-answer');
+                    showAnswerButton.addEventListener('click', () => {
+                        const answer = flashcard.querySelector('p:nth-child(3)');
+                        answer.style.display = answer.style.display === 'none' ? 'block' : 'none';
+                    });
+    
+                    const reviewLaterButton = flashcard.querySelector('.review-later');
+                    reviewLaterButton.addEventListener('click', () => {
+                        trackPerformance(index, 'review_later');
+                        markFlashcardCompleted(flashcard, 'red', [reviewLaterButton, iKnewItButton, showAnswerButton]);
+                    });
+    
+                    const iKnewItButton = flashcard.querySelector('.i-knew-it');
+                    iKnewItButton.addEventListener('click', () => {
+                        trackPerformance(index, 'i_knew_it');
+                        markFlashcardCompleted(flashcard, 'green', [reviewLaterButton, iKnewItButton, showAnswerButton]);
+                    });
+    
+                    flashcardsDiv.appendChild(flashcard);
+                    performanceData.push({ questionIndex: index, status: null }); // Initialize tracking
+                });
+    
+                // Toggle visibility of flashcards
+                document.getElementById('showFlashcardsBtn').addEventListener('click', function () {
+                    const flashcardsDiv = document.getElementById('flashcards');
+                    flashcardsDiv.style.display = flashcardsDiv.style.display === 'none' ? 'block' : 'none';
+                });
+            })
+            .catch(err => console.error('Error:', err));
+        });
+    
+        function trackPerformance(questionIndex, status) {
+            const performanceEntry = performanceData.find(entry => entry.questionIndex === questionIndex);
+            if (performanceEntry) {
+                performanceEntry.status = status; // Update the status for the question
+                console.log(`Performance updated for Question ${questionIndex + 1}: ${status}`);
+            }
+        }
+    
+        function markFlashcardCompleted(flashcard, color, buttonsToDisable) {
+            // Change the background color of the flashcard
+            flashcard.style.backgroundColor = color;
+    
+            // Disable all action buttons for that flashcard
+            buttonsToDisable.forEach(button => {
+                button.disabled = true;
+            });
+        }
+
+        document.getElementById('showQuizBtn').addEventListener('click', function () {
+            const quizDiv = document.getElementById('quiz-time');
+            if (quizDiv.style.display === 'none') {
+                quizDiv.style.display = 'block';
+                if (!quizCompleted) {
+                    fetchQuizContent(quizDiv);
+                }
+            } else {
+                quizDiv.style.display = 'none';
+            }
+        });
+
+        function fetchQuizContent(quizDiv) {
+            quizDiv.innerHTML = ''; // Clear previous quiz content
+    
+            fetch('/quiz')
+                .then(response => response.json())
+                .then(data => {
+                    // Fill-in-the-blank questions
+                    data.fill_in_blanks.forEach((item, index) => {
+                        const questionDiv = document.createElement('div');
+                        questionDiv.classList.add('quiz-question');
+                        const options = [item.answer_1, item.answer_2, item.answer_correct];
+                        shuffleArray(options);
+                        questionDiv.innerHTML = `
+                            <h3>Fill-in-the-Blank ${index + 1}</h3>
+                            <p>${item.question.replace('_______', '___')}</p>
+                            ${options.map(option => `
+                                <button onclick="handleAnswer(this, '${option}', '${item.answer_correct}')">${option}</button>
+                            `).join('')}
+                        `;
+                        quizDiv.appendChild(questionDiv);
+                    });
+    
+                    // Matching pairs
+                    data.matching_pairs.forEach((pair, index) => {
+                        const pairDiv = document.createElement('div');
+                        pairDiv.classList.add('matching-container');
+    
+                        // Randomize and create term and definition columns
+                        const terms = [pair.term];
+                        const definitions = [pair.definition];
+                        shuffleArray(terms);
+                        shuffleArray(definitions);
+    
+                        const termColumn = createMatchingColumn('Terms', terms, 'term', pair);
+                        const definitionColumn = createMatchingColumn('Definitions', definitions, 'definition', pair);
+    
+                        pairDiv.appendChild(termColumn);
+                        pairDiv.appendChild(definitionColumn);
+                        quizDiv.appendChild(pairDiv);
+                    });
+                })
+                .catch(err => console.error('Error:', err));
+        }
+
+        function createMatchingColumn(title, items, type, pair) {
+            const columnDiv = document.createElement('div');
+            columnDiv.classList.add('matching-column');
+
+            const titleElement = document.createElement('h3');
+            titleElement.textContent = title;
+            columnDiv.appendChild(titleElement);
+
+            items.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.textContent = item;
+                itemDiv.classList.add('matching-item');
+                itemDiv.dataset.type = type;
+                itemDiv.dataset.pair = JSON.stringify(pair);
+
+                itemDiv.addEventListener('click', () => handleMatchingClick(itemDiv, pair));
+                columnDiv.appendChild(itemDiv);
+            });
+
+            return columnDiv;
+        }
+
+        let selectedTerm = null;
+        let selectedDefinition = null;
+
+        function handleMatchingClick(item, pair) {
+            // Ignore if already marked as correct/incorrect
+            if (item.classList.contains('correct') || item.classList.contains('incorrect')) return;
+
+            if (item.dataset.type === 'term') {
+                if (selectedTerm) {
+                    selectedTerm.classList.remove('selected');
+                }
+                selectedTerm = item;
+            } else if (item.dataset.type === 'definition') {
+                if (selectedDefinition) {
+                    selectedDefinition.classList.remove('selected');
+                }
+                selectedDefinition = item;
+            }
+
+            item.classList.add('selected');
+
+            // Check if both term and definition are selected
+            if (selectedTerm && selectedDefinition) {
+                checkMatchingPair(selectedTerm, selectedDefinition, pair);
+            }
+        }
+
+        function checkMatchingPair(term, definition, pair) {
+            const correctPair = term.textContent === pair.term && definition.textContent === pair.definition;
+
+            if (correctPair) {
+                term.classList.add('correct');
+                definition.classList.add('correct');
+            } else {
+                term.classList.add('incorrect');
+                definition.classList.add('incorrect');
+            }
+
+            // Reset selections after checking
+            selectedTerm = null;
+            selectedDefinition = null;
+        }
+
+        function handleAnswer(button, selectedAnswer, correctAnswer) {
+            const questionDiv = button.parentNode;
+
+            // If already answered, return
+            if (questionDiv.classList.contains('correct') || questionDiv.classList.contains('incorrect')) return;
+
+            // Disable all buttons
+            const buttons = questionDiv.querySelectorAll('button');
+            buttons.forEach(btn => btn.disabled = true);
+
+            if (selectedAnswer === correctAnswer) {
+                questionDiv.classList.add('correct');
+            } else {
+                questionDiv.classList.add('incorrect');
+            }
+
+            // Check if all questions are completed
+            const allQuestions = document.querySelectorAll('.quiz-question');
+            if (Array.from(allQuestions).every(q => q.classList.contains('correct') || q.classList.contains('incorrect'))) {
+                quizCompleted = true; // Mark quiz as completed
+            }
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+        
+        document.getElementById('showFeedbackBtn').addEventListener('click', function () {
+            const feedbackDiv = document.getElementById('feedback');
+            feedbackDiv.style.display = feedbackDiv.style.display === 'none' ? 'block' : 'none';
+
+            // Calculate statistics
+            const totalQuestions = performanceData.length;
+            const learnedQuestions = performanceData.filter(entry => entry.status === 'i_knew_it').length;
+            const reviewQuestions = performanceData.filter(entry => entry.status === 'review_later').length;
+
+            const learnedPercentage = totalQuestions > 0 ? ((learnedQuestions / totalQuestions) * 100).toFixed(2) : 0;
+            const reviewPercentage = totalQuestions > 0 ? ((reviewQuestions / totalQuestions) * 100).toFixed(2) : 0;
+
+            // Show feedback data
+            feedbackDiv.innerHTML = `
+                <h2>Performance Feedback</h2>
+                <p>Questions Learned: ${learnedQuestions} (${learnedPercentage}%)</p>
+                <p>Questions for Reviewing: ${reviewQuestions} (${reviewPercentage}%)</p>
+            `;
+        });
+    </script>
+</body>
+</html>
